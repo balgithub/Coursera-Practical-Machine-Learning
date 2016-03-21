@@ -1,0 +1,142 @@
+---
+title: "Practical Machine Learning - Course Project"
+author: "Bruce Leistikow"
+date: "March 20, 2016"
+output:
+  html_document:
+    highlight: pygments
+    keep_md: yes
+    theme: united
+    toc: yes
+  pdf_document:
+    toc: no
+subtitle: Predicting Movements from Data
+geometry: margin=0.5in
+---
+
+```{r global_options, include = FALSE}
+knitr::opts_chunk$set(fig.width = 14, fig.height = 14, fig.align = "center", echo = TRUE)
+```
+
+##Executive Summary
+The purpose of this analysis is to make predictions about how people performed certain exercises.  Within the training set, the variable named "classe" provides this data for each observation. This reports describes an approach to building a prediction model, illustrates cross validation, and offers an expectation of the sample error.  Lastly, the model is applied to a test dataset to generate 20 predictions.
+
+##Load and Clean Data
+
+The training and testing datasets are avaiable here:
+
+* [Training](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+* [Testing](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+Explanatory documentation for the data can be found here:
+
+* [Data Description](http://groupware.les.inf.puc-rio.br/har)
+
+
+Load required libraries used in this analysis.
+```{r Load_Libraries, cache=FALSE, warning=FALSE, message=FALSE}
+library(caret)
+library(ggplot2)
+library(corrplot)
+library(randomForest)
+library(doParallel)
+```
+
+
+Load csv files into R for further refinement.
+```{r Load_Data, cache=TRUE}
+setwd("/Users/bleistikow/Documents/Coursera/Practical_Machine_Learning")
+rawTrainingData <- read.csv("pml-training.csv", na.strings = c("NA", ""), strip.white = TRUE)
+rawPredictData <- read.csv("pml-testing.csv", na.strings = c("NA", ""), strip.white = TRUE)
+```
+
+
+The first 7 columns do not add value to the prediction model, so they are removed from both datasets here
+```{r Reduce_Data, cache=TRUE}
+reducedTrainingData <- rawTrainingData[, -(1:7)]
+reducedPredictData <- rawPredictData[, -(1:7)]
+```
+
+
+Many data elements contain NA's which can have an impact on the accuracy of the prediction model.  Thus, removal of columns with numerous NA observations is imperative.
+```{r Refine_Dataset, cache=TRUE}
+NAs <- apply(reducedTrainingData, 2, function(x) {sum(is.na(x))})
+
+validTrainingData <- reducedTrainingData[, which(NAs == 0)]
+validPredictData <- reducedPredictData[, which(NAs == 0)]
+dim(validTrainingData)
+dim(validPredictData)
+```
+
+
+##Setup Data for Cross Validation
+Partition the data into training and test sets for cross validation. The training data will receive 60% of the observations and the remaining 40% will go toward cross validation test data although this is unnecessary since we will likely choose a Random Forest model and cross validation is 'baked in' as the data is subsampled by the algorithm used to generate the model.
+```{r Partition_Data, cache=FALSE}
+inTrain <- createDataPartition(y = validTrainingData$classe, p = 0.6, list = FALSE)
+trainingData <- validTrainingData[inTrain, ]
+testingData <- validTrainingData[-inTrain, ]
+```
+
+
+Review the cleaned and partitioned training data. The training data now has `r dim(trainingData)[1]` rows and `r dim(trainingData)[2]` columns. One of which is the predictor/outcome variable named, "classe".
+```{r Review_Dataset, cache=TRUE}
+head(trainingData, 2)
+```
+
+
+A review of the correlation graph may prove interesting as it will show which variables are inter-related and which are not. This could also be useful if we wanted to further reduce the factors used in building the model.
+```{r Plot_Correlation, cache=TRUE}
+correlationData = cor(trainingData[,-c(grep("classe", names(trainingData)), length(trainingData))], 
+                      use = "pairwise.complete.obs")
+corrplot(correlationData, method = "square", tl.cex=0.7)
+```
+
+
+## Build Model
+A Random Forest model typically yields the highest accuracy, but can be computationally intensive.  The `randomForest()` method is used here since it is speedier than the `train()` function with `method="rf"` parameter found in the `caret` package. 
+```{r Create_Model, cache=TRUE}
+set.seed(320)
+rfModel <- randomForest(classe ~ ., data=trainingData)
+rfModel
+```
+
+
+Another interesting graphic is the Variable Importance Plot.  We generate this plot to quickly examine the most important factors in the Random Forest model. 
+```{r Plot_Variance, cache=TRUE}
+varImpPlot(rfModel, main = "Model Variables of Highest Importance")
+```
+
+
+## Assessing Accuracy of the Model
+We use several methods to assess the accuracy of the model, and now Cross Validate the model on the data reserved for testing which we set-aside earlier.  We do this before applying the model to the prediction data. 
+```{r Cross_Validate, cache=TRUE}
+pred <- predict(rfModel, newdata=testingData)
+sum(pred == testingData$classe) / length(pred)
+crossValidationData <- postResample(pred, testingData$classe)
+crossValidationData
+```
+Our model seems quite good with Accuracy of: `r round(crossValidationData[1], 4)*100`%.
+
+
+## Confusion Matrix
+Apply a Confusion Matrix and examine the error rate of the model
+```{r Confusion_Matrix, cache=TRUE}
+set.seed(320)
+confuseMat <- confusionMatrix(pred, testingData$classe)
+confuseMat
+
+pr <- postResample(pred, testingData$classe)[[1]]
+1 - pr[[1]]  
+```
+Both methods of calculating the error are close, showing the Out of Sample Error to be: `r round(1 - confuseMat$overall['Accuracy'], 4) * 100`%.  It seems like we are ready to use this model!
+
+## Predict on 20 cases 
+We now use our Random Forest model to generate the outcomes using the prediction data.
+```{r Predict_Cases, cache=FALSE}
+predictedValues <- predict(rfModel, validPredictData)
+predictedValues
+```
+
+##Conclusion
+We refined the movement dataset to eliminate more than 100 low utility columns, created a Random Forest prediction model which demonstrated an extremely high accuracy rate, and used cross validation methods to verify the model using the `postResample()` and `confusionMatrix()` methods which confirmed the low error rate of this approach. Finally, we applied the Random Forest model to the prediction / validation data to generate the desired answers. 
+
